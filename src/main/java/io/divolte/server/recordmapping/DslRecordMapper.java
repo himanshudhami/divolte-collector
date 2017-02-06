@@ -16,17 +16,6 @@
 
 package io.divolte.server.recordmapping;
 
-import static io.divolte.server.IncomingRequestProcessor.*;
-import groovy.lang.Binding;
-import groovy.lang.GroovyShell;
-import groovy.lang.Script;
-import io.divolte.server.DivolteEvent;
-import io.divolte.server.ValidatedConfiguration;
-import io.divolte.server.ip2geo.LookupService;
-import io.divolte.server.recordmapping.DslRecordMapping.MappingAction;
-import io.divolte.server.recordmapping.DslRecordMapping.MappingAction.MappingResult;
-import io.undertow.server.HttpServerExchange;
-
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -49,17 +38,22 @@ import org.slf4j.LoggerFactory;
 import com.google.common.collect.Maps;
 import com.google.common.io.Files;
 
+import groovy.lang.Binding;
+import groovy.lang.GroovyShell;
+import groovy.lang.Script;
+import io.divolte.server.DivolteEvent;
+import io.divolte.server.config.ValidatedConfiguration;
+import io.divolte.server.ip2geo.LookupService;
+import io.divolte.server.recordmapping.DslRecordMapping.MappingAction;
+import io.divolte.server.recordmapping.DslRecordMapping.MappingAction.MappingResult;
+
 @ParametersAreNonnullByDefault
 @NotThreadSafe
-public class DslRecordMapper implements RecordMapper {
+public class DslRecordMapper {
     private final static Logger logger = LoggerFactory.getLogger(DslRecordMapper.class);
 
     private final Schema schema;
     private final List<DslRecordMapping.MappingAction> actions;
-
-    public DslRecordMapper(final ValidatedConfiguration vc, final Schema schema, final Optional<LookupService> geoipService) {
-        this(vc, vc.configuration().tracking.schemaMapping.get().mappingScriptFile, schema, geoipService);
-    }
 
     public DslRecordMapper(final ValidatedConfiguration vc, final String groovyFile, final Schema schema, final Optional<LookupService> geoipService) {
         this.schema = Objects.requireNonNull(schema);
@@ -83,7 +77,7 @@ public class DslRecordMapper implements RecordMapper {
             script.run();
 
             actions = mapping.actions();
-        } catch (IOException e) {
+        } catch (final IOException e) {
             throw new RuntimeException("Could not load mapping script file: " + groovyFile, e);
         }
     }
@@ -93,14 +87,12 @@ public class DslRecordMapper implements RecordMapper {
         actions = mapping.actions();
     }
 
-    @Override
-    public GenericRecord newRecordFromExchange(HttpServerExchange exchange) {
+    public GenericRecord newRecordFromExchange(final DivolteEvent event) {
         final GenericRecordBuilder builder = new GenericRecordBuilder(schema);
-        final DivolteEvent eventData = exchange.getAttachment(DIVOLTE_EVENT_KEY);
         final Map<String,Optional<?>> context = Maps.newHashMapWithExpectedSize(20);
 
         for (final Iterator<MappingAction> itr = actions.iterator();
-             itr.hasNext() && itr.next().perform(exchange, eventData, context, builder) == MappingResult.CONTINUE;) {
+             itr.hasNext() && itr.next().perform(event, context, builder) == MappingResult.CONTINUE;) {
             // Nothing needed in here.
         }
 

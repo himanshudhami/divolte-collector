@@ -52,7 +52,7 @@ public class AvroGenericRecordMapperTest {
         JSON_MAPPER.configure(JsonParser.Feature.ALLOW_COMMENTS, true);
         JSON_MAPPER.configure(DeserializationFeature.USE_BIG_DECIMAL_FOR_FLOATS, true);
         JSON_MAPPER.configure(DeserializationFeature.USE_BIG_INTEGER_FOR_INTS, true);
-        JSON_MAPPER.setPropertyNamingStrategy(new PropertyNamingStrategy.LowerCaseWithUnderscoresStrategy());
+        JSON_MAPPER.setPropertyNamingStrategy(PropertyNamingStrategy.SNAKE_CASE);
     }
 
     @JsonIgnoreProperties("title")
@@ -105,7 +105,7 @@ public class AvroGenericRecordMapperTest {
 
     private AvroGenericRecordMapper reader;
 
-    public AvroGenericRecordMapperTest(@SuppressWarnings("unused") final String sampleTitle,
+    public AvroGenericRecordMapperTest(final String sampleTitle,
                                        final Fixture testFixture) {
         this.testFixture = Objects.requireNonNull(testFixture);
     }

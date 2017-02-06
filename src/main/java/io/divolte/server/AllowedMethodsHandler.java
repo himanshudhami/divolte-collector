@@ -47,18 +47,22 @@ public class AllowedMethodsHandler implements HttpHandler {
         this(next, ImmutableSet.copyOf(allowedMethods));
     }
 
+    public AllowedMethodsHandler(final HttpHandler next, final HttpString allowed) {
+        this(next, ImmutableSet.of(allowed));
+    }
+
     @Override
     public void handleRequest(final HttpServerExchange exchange) throws Exception {
         final HttpString requestMethod = exchange.getRequestMethod();
         if (allowedMethods.contains(requestMethod)) {
             next.handleRequest(exchange);
         } else {
-            exchange.setResponseCode(StatusCodes.METHOD_NOT_ALLOWED);
+            exchange.setStatusCode(StatusCodes.METHOD_NOT_ALLOWED);
             exchange.getResponseHeaders()
                     .put(Headers.ALLOW, allowedMethodHeader)
                     .put(Headers.CONTENT_TYPE, "text/plain; charset=utf-8");
             exchange.getResponseSender()
-                    .send("HTTP method" + requestMethod + " + not allowed.", StandardCharsets.UTF_8);
+                    .send("HTTP method " + requestMethod + " not allowed.", StandardCharsets.UTF_8);
             exchange.endExchange();
         }
     }

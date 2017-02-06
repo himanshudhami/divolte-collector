@@ -17,6 +17,7 @@
 package io.divolte.server;
 
 import com.google.common.base.Preconditions;
+import com.google.common.collect.ImmutableMap;
 import io.divolte.server.ServerTestUtils.EventPayload;
 import io.divolte.server.ServerTestUtils.TestServer;
 import org.junit.After;
@@ -28,11 +29,9 @@ import javax.annotation.ParametersAreNonnullByDefault;
 import java.io.IOException;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.util.Map;
 
-import static io.divolte.server.IncomingRequestProcessor.DIVOLTE_EVENT_KEY;
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.*;
 
 @ParametersAreNonnullByDefault
 public class RequestChecksumTest {
@@ -93,33 +92,35 @@ public class RequestChecksumTest {
             + "t=sentinelEvent&"
             + "x=-y99lem";
 
-    private String serverConfigurationResourceName;
+    private boolean discardCorruptEvents;
 
     @Nullable
     private TestServer server;
+    @Nullable
+    private ImmutableMap<String,Object> serverProperties;
 
     @Test
     public void shouldFlagCorrectChecksumAsNotCorrupted() throws IOException, InterruptedException {
         request(URL_QUERY_CHECKSUM_GOOD);
         Preconditions.checkState(null != server);
-        final EventPayload event = server.waitForEvent();
-        assertFalse(event.exchange.getAttachment(DIVOLTE_EVENT_KEY).corruptEvent);
+        final EventPayload payload = server.waitForEvent();
+        assertFalse(payload.event.corruptEvent);
     }
 
     @Test
     public void shouldFlagIncorrectChecksumAsCorrupted() throws IOException, InterruptedException {
         request(URL_QUERY_CHECKSUM_BAD);
         Preconditions.checkState(null != server);
-        final EventPayload event = server.waitForEvent();
-        assertTrue(event.exchange.getAttachment(DIVOLTE_EVENT_KEY).corruptEvent);
+        final EventPayload payload = server.waitForEvent();
+        assertTrue(payload.event.corruptEvent);
     }
 
     @Test
     public void shouldFlagMissingChecksumAsCorrupted() throws IOException, InterruptedException {
         request(URL_QUERY_CHECKSUM_MISSING);
         Preconditions.checkState(null != server);
-        final EventPayload event = server.waitForEvent();
-        assertTrue(event.exchange.getAttachment(DIVOLTE_EVENT_KEY).corruptEvent);
+        final EventPayload payload = server.waitForEvent();
+        assertTrue(payload.event.corruptEvent);
     }
 
     @Test
@@ -127,8 +128,8 @@ public class RequestChecksumTest {
         for (final String urlQueryChecksumPartial : URL_QUERY_CHECKSUM_PARTIALS) {
             request(urlQueryChecksumPartial);
             Preconditions.checkState(null != server);
-            final EventPayload event = server.waitForEvent();
-            assertTrue(event.exchange.getAttachment(DIVOLTE_EVENT_KEY).corruptEvent);
+            final EventPayload payload = server.waitForEvent();
+            assertTrue(payload.event.corruptEvent);
         }
     }
 
@@ -136,41 +137,42 @@ public class RequestChecksumTest {
     public void shouldChecksumCorrectlyWithNonAsciiParameters() throws IOException, InterruptedException {
         request(URL_QUERY_CHECKSUM_UNICODE);
         Preconditions.checkState(null != server);
-        final EventPayload event = server.waitForEvent();
-        final DivolteEvent eventData = event.exchange.getAttachment(DIVOLTE_EVENT_KEY);
+        final EventPayload payload = server.waitForEvent();
+        final DivolteEvent eventData = payload.event;
         assertFalse(eventData.corruptEvent);
         assertEquals("ụñ⚕©ºḌℨ", eventData.eventType.get());
     }
 
     @Test
     public void shouldDiscardCorruptedEventsIfConfigured() throws InterruptedException, IOException {
-        serverConfigurationResourceName = "checksum-discard-corrupt-test.conf";
+        discardCorruptEvents = true;
         request(URL_QUERY_CHECKSUM_BAD);
         request(URL_QUERY_SENTINEL);
         Preconditions.checkState(null != server);
-        final EventPayload event = server.waitForEvent();
+        final EventPayload payload = server.waitForEvent();
         // The first request should be missing, and we should now have the sentinel event.
-        final String eventType = event.exchange.getAttachment(DIVOLTE_EVENT_KEY).eventType.get();
+        final String eventType = payload.event.eventType.get();
         assertEquals("sentinelEvent", eventType);
     }
 
     private void request(final String queryString) throws IOException {
-        setServerConf(serverConfigurationResourceName);
+        setServerConf(ImmutableMap.of("divolte.mappings.test.discard_corrupted", discardCorruptEvents));
         Preconditions.checkState(null != server);
         final URL url = new URL(String.format(URL_STRING, server.port) + queryString);
         final HttpURLConnection conn = (HttpURLConnection) url.openConnection();
         assertEquals(200, conn.getResponseCode());
     }
 
-    private void setServerConf(final String configurationResourceName) {
-        if (null == server || !configurationResourceName.equals(server.config.origin().resource())) {
-            setServer(new TestServer(configurationResourceName));
+    private void setServerConf(final Map<String,Object> configurationProperties) {
+        if (null == server || !configurationProperties.equals(serverProperties)) {
+            serverProperties = ImmutableMap.copyOf(configurationProperties);
+            setServer(new TestServer("base-test-server.conf", serverProperties));
         }
     }
 
     @Before
     public void setUp() {
-        serverConfigurationResourceName = "checksum-test.conf";
+        discardCorruptEvents = false;
     }
 
     @After
@@ -178,16 +180,13 @@ public class RequestChecksumTest {
         setServer(null);
     }
 
-    private void setServer(@Nullable TestServer newServer) {
+    private void setServer(@Nullable final TestServer newServer) {
         final TestServer oldServer = this.server;
         if (oldServer != newServer) {
             if (null != oldServer) {
                 oldServer.server.shutdown();
             }
             this.server = newServer;
-            if (null != newServer) {
-                newServer.server.run();
-            }
         }
     }
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright 2014 GoDataDriven B.V.
+ * Copyright 2016 GoDataDriven B.V.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -19,27 +19,27 @@ package io.divolte.server;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
 import io.divolte.server.ServerTestUtils.EventPayload;
-import org.junit.Before;
+import io.divolte.server.config.BrowserSourceConfiguration;
 import org.junit.Test;
 import org.openqa.selenium.By;
 
 import javax.annotation.ParametersAreNonnullByDefault;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Optional;
-import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
-import static io.divolte.server.IncomingRequestProcessor.*;
+import static io.divolte.server.IncomingRequestProcessor.DUPLICATE_EVENT_KEY;
 import static io.divolte.server.SeleniumTestBase.TEST_PAGES.*;
 import static org.hamcrest.Matchers.*;
 import static org.junit.Assert.*;
 
 @ParametersAreNonnullByDefault
 public class SeleniumJavaScriptTest extends SeleniumTestBase {
-    private static final long HALF_DAY_MS = TimeUnit.HOURS.toMillis(12);
-
     @Test
-    public void shouldRegenerateIDsOnExplicitNavigation() {
+    public void shouldRegenerateIDsOnExplicitNavigation() throws Exception {
+        doSetUp();
         Preconditions.checkState(null != driver && null != server);
 
         // do a sequence of explicit navigation by setting the browser location
@@ -55,7 +55,8 @@ public class SeleniumJavaScriptTest extends SeleniumTestBase {
     }
 
     @Test
-    public void shouldRegenerateIDsOnRefresh() {
+    public void shouldRegenerateIDsOnRefresh() throws Exception {
+        doSetUp();
         Preconditions.checkState(null != driver && null != server);
 
         // Navigate to the same page twice
@@ -68,7 +69,8 @@ public class SeleniumJavaScriptTest extends SeleniumTestBase {
     }
 
     @Test
-    public void shouldRegenerateIDsOnForwardBackNavigation() {
+    public void shouldRegenerateIDsOnForwardBackNavigation() throws Exception {
+        doSetUp();
         Preconditions.checkState(null != driver && null != server);
 
         // Navigate to the same page twice
@@ -88,7 +90,8 @@ public class SeleniumJavaScriptTest extends SeleniumTestBase {
     }
 
     @Test
-    public void shouldGenerateIDsOnComplexSeriesOfEvents() {
+    public void shouldGenerateIDsOnComplexSeriesOfEvents() throws Exception {
+        doSetUp();
         Preconditions.checkState(null != driver && null != server);
 
         // Navigate to the same page twice
@@ -108,7 +111,7 @@ public class SeleniumJavaScriptTest extends SeleniumTestBase {
                 driver.navigate()::back
                 };
 
-        // we expect on duplicate PV ID, because of the custom event
+        // We expect one duplicate PV ID, because of the custom event
         final int numberOfUniquePageViewIDs = uniquePageViewIdsForSeriesOfActions(actions);
         assertEquals(actions.length - 1, numberOfUniquePageViewIDs);
     }
@@ -118,7 +121,7 @@ public class SeleniumJavaScriptTest extends SeleniumTestBase {
                 .flatMap((action) -> {
                     action.run();
                     final EventPayload payload = unchecked(server::waitForEvent);
-                    final DivolteEvent event = payload.exchange.getAttachment(DIVOLTE_EVENT_KEY);
+                    final DivolteEvent event = payload.event;
                     return event.browserEventData.map(b -> b.pageViewId).map(Stream::of).orElse(null);
                 })
                 .collect(Collectors.toSet()).size();
@@ -141,25 +144,26 @@ public class SeleniumJavaScriptTest extends SeleniumTestBase {
     }
 
     @Test
-    public void shouldSignalWhenOpeningPage() throws InterruptedException {
+    public void shouldSignalWhenOpeningPage() throws Exception {
+        doSetUp();
         Preconditions.checkState(null != driver && null != server);
 
         final String location = urlOf(BASIC);
         driver.get(location);
 
-        EventPayload viewEvent = server.waitForEvent();
+        final EventPayload payload = server.waitForEvent();
 
-        final DivolteEvent eventData = viewEvent.exchange.getAttachment(DIVOLTE_EVENT_KEY);
-        final Boolean detectedDuplicate = viewEvent.exchange.getAttachment(DUPLICATE_EVENT_KEY);
+        final DivolteEvent eventData = payload.event;
+        final Boolean detectedDuplicate = payload.event.exchange.getAttachment(DUPLICATE_EVENT_KEY);
 
         assertFalse(eventData.corruptEvent);
         assertFalse(detectedDuplicate);
 
-        assertFalse(Strings.isNullOrEmpty(eventData.partyCookie.value));
+        assertFalse(Strings.isNullOrEmpty(eventData.partyId.value));
 
         assertTrue(eventData.newPartyId);
 
-        assertFalse(Strings.isNullOrEmpty(eventData.sessionCookie.value));
+        assertFalse(Strings.isNullOrEmpty(eventData.sessionId.value));
         assertTrue(eventData.firstInSession);
 
         assertTrue(eventData.browserEventData.isPresent());
@@ -178,8 +182,9 @@ public class SeleniumJavaScriptTest extends SeleniumTestBase {
          * but we'd expect it to be a reasonably accurate clock on the same planet.
          * So, if it is within +/- 12 hours of our clock, we think it's fine.
          */
-        assertThat(eventData.clientUtcOffset,
-                allOf(greaterThan(-HALF_DAY_MS), lessThan(HALF_DAY_MS)));
+        final Instant now = Instant.now();
+        assertThat(eventData.clientTime,
+                   allOf(greaterThan(now.minus(12, ChronoUnit.HOURS)), lessThan(now.plus(12, ChronoUnit.HOURS))));
 
         /*
          * Doing true assertions against the viewport and window size
@@ -204,14 +209,15 @@ public class SeleniumJavaScriptTest extends SeleniumTestBase {
     }
 
     @Test
-    public void shouldSendCustomEvent() throws RuntimeException, InterruptedException {
+    public void shouldSendCustomEvent() throws Exception {
+        doSetUp();
         Preconditions.checkState(null != driver && null != server);
         driver.get(urlOf(BASIC));
         server.waitForEvent();
 
         driver.findElement(By.id("custom")).click();
-        final EventPayload customEvent = server.waitForEvent();
-        final DivolteEvent eventData = customEvent.exchange.getAttachment(DIVOLTE_EVENT_KEY);
+        final EventPayload payload = server.waitForEvent();
+        final DivolteEvent eventData = payload.event;
 
         assertTrue(eventData.eventType.isPresent());
         assertEquals("custom", eventData.eventType.get());
@@ -224,18 +230,19 @@ public class SeleniumJavaScriptTest extends SeleniumTestBase {
     }
 
     @Test
-    public void shouldSetAppropriateCookies() throws RuntimeException, InterruptedException {
+    public void shouldSetAppropriateCookies() throws Exception {
+        doSetUp();
         Preconditions.checkState(null != driver && null != server);
         driver.get(urlOf(BASIC));
         server.waitForEvent();
 
-        Optional<DivolteIdentifier> parsedPartyCookieOption = DivolteIdentifier.tryParse(driver.manage().getCookieNamed(server.config.getString("divolte.tracking.party_cookie")).getValue());
+        final Optional<DivolteIdentifier> parsedPartyCookieOption = DivolteIdentifier.tryParse(driver.manage().getCookieNamed(BrowserSourceConfiguration.DEFAULT_BROWSER_SOURCE_CONFIGURATION.partyCookie).getValue());
         assertTrue(parsedPartyCookieOption.isPresent());
         assertThat(
                 parsedPartyCookieOption.get(),
                 isA(DivolteIdentifier.class));
 
-        Optional<DivolteIdentifier> parsedSessionCookieOption = DivolteIdentifier.tryParse(driver.manage().getCookieNamed(server.config.getString("divolte.tracking.session_cookie")).getValue());
+        final Optional<DivolteIdentifier> parsedSessionCookieOption = DivolteIdentifier.tryParse(driver.manage().getCookieNamed(BrowserSourceConfiguration.DEFAULT_BROWSER_SOURCE_CONFIGURATION.sessionCookie).getValue());
         assertTrue(parsedSessionCookieOption.isPresent());
         assertThat(
                 parsedSessionCookieOption.get(),
@@ -243,18 +250,37 @@ public class SeleniumJavaScriptTest extends SeleniumTestBase {
     }
 
     @Test
-    public void shouldPickupProvidedPageViewIdFromHash() throws RuntimeException, InterruptedException {
+    public void shouldPickupProvidedPageViewIdFromHash() throws Exception {
+        doSetUp();
         Preconditions.checkState(null != driver && null != server);
         driver.get(urlOf(PAGE_VIEW_SUPPLIED));
-        EventPayload event = server.waitForEvent();
-        DivolteEvent eventData = event.exchange.getAttachment(DIVOLTE_EVENT_KEY);
+        final EventPayload payload = server.waitForEvent();
+        final DivolteEvent eventData = payload.event;
 
         assertEquals("supercalifragilisticexpialidocious", eventData.browserEventData.get().pageViewId);
         assertEquals("supercalifragilisticexpialidocious0", eventData.eventId);
     }
 
-    @Before
-    public void setup() throws Exception {
-        doSetUp("selenium-test-config.conf");
+    @Test
+    public void shouldSupportCustomJavascriptName() throws Exception {
+        doSetUp("selenium-test-custom-javascript-name.conf");
+        Preconditions.checkState(null != driver && null != server);
+
+        driver.get(urlOf(CUSTOM_JAVASCRIPT_NAME));
+        final EventPayload payload = server.waitForEvent();
+        final DivolteEvent eventData = payload.event;
+
+        assertEquals("pageView", eventData.eventType.get());
+    }
+
+    @Test
+    public void shouldUseConfiguredEventSuffix() throws Exception {
+        doSetUp("selenium-test-custom-event-suffix.conf");
+        Preconditions.checkState(null != driver && null != server);
+        driver.get(urlOf(BASIC));
+        final EventPayload payload = server.waitForEvent();
+        final DivolteEvent eventData = payload.event;
+
+        assertEquals("pageView", eventData.eventType.get());
     }
 }
